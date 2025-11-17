@@ -20,6 +20,10 @@
 // OLED animation
 #include "lib/layer_status/layer_status.h"
 
+// State variables for Alt-Tab encoder behavior
+static bool alt_tab_active = false;     // Tracks if Alt is currently held
+static uint16_t alt_tab_timer = 0;      // Timer for Alt release timeout
+
 // Each layer gets a name for readability, which is then used in the keymap matrix below.
 // The underscores don't mean anything - you can have a layer called STUFF or any other name.
 // Layer names don't all need to be of the same length, obviously, and you can also skip them
@@ -130,11 +134,63 @@ const uint16_t PROGMEM keymaps[][MATRIX_ROWS][MATRIX_COLS] = {
     }
 #endif
 
-#ifdef ENCODER_MAP_ENABLE
-const uint16_t PROGMEM encoder_map[][NUM_ENCODERS][NUM_DIRECTIONS] = {
-    [_BASE] = { ENCODER_CCW_CW(KC_MPRV, KC_MNXT), ENCODER_CCW_CW(KC_PGDN, KC_PGUP), ENCODER_CCW_CW(KC_VOLD, KC_VOLU) },
-    [_FN]   = { ENCODER_CCW_CW(KC_TRNS, KC_TRNS), ENCODER_CCW_CW(KC_TRNS, KC_TRNS), ENCODER_CCW_CW(KC_TRNS, KC_TRNS) },
-    [_FN1]  = { ENCODER_CCW_CW(KC_TRNS, KC_TRNS), ENCODER_CCW_CW(KC_TRNS, KC_TRNS), ENCODER_CCW_CW(KC_TRNS, KC_TRNS) },
-    [_FN2]  = { ENCODER_CCW_CW(KC_TRNS, KC_TRNS), ENCODER_CCW_CW(KC_TRNS, KC_TRNS), ENCODER_CCW_CW(KC_TRNS, KC_TRNS) },
-};
-#endif
+// Custom encoder behavior implementation
+// Encoder indices: 0=left, 1=middle, 2=right
+bool encoder_update_user(uint8_t index, bool clockwise) {
+    // Get current layer
+    uint8_t layer = get_highest_layer(layer_state);
+    
+    if (layer == _BASE) {
+        switch (index) {
+            case 0:  // Left encoder: Previous/Next track
+                if (clockwise) {
+                    tap_code(KC_MNXT);
+                } else {
+                    tap_code(KC_MPRV);
+                }
+                break;
+                
+            case 1:  // Middle encoder: Alt-Tab behavior on base layer
+                if (!alt_tab_active) {
+                    // First tick: press and hold Alt
+                    register_code(KC_LALT);
+                    alt_tab_active = true;
+                }
+                
+                // Send Tab or Shift+Tab
+                if (clockwise) {
+                    tap_code(KC_TAB);
+                } else {
+                    register_code(KC_LSFT);
+                    tap_code(KC_TAB);
+                    unregister_code(KC_LSFT);
+                }
+                
+                // Reset the inactivity timer
+                alt_tab_timer = timer_read();
+                break;
+                
+            case 2:  // Right encoder: Volume Down/Up
+                if (clockwise) {
+                    tap_code(KC_VOLU);
+                } else {
+                    tap_code(KC_VOLD);
+                }
+                break;
+        }
+    } else {
+        // On non-base layers, encoders pass through (no action)
+        // This preserves the transparent behavior on FN layers
+    }
+    
+    return false;
+}
+
+// Timer-based Alt release
+void matrix_scan_user(void) {
+    // Check if Alt-Tab is active and timeout has elapsed
+    if (alt_tab_active && timer_elapsed(alt_tab_timer) > 1000) {
+        unregister_code(KC_LALT);
+        alt_tab_active = false;
+    }
+}
